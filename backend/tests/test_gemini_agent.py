@@ -211,60 +211,67 @@ class TestGather:
         assert all(tool["type"] == "function" for tool in fake.calls[0]["tools"])
 
 
-class TestSectionStreaming:
+class TestWriting:
     context = ResearchContext(
         company="Acme",
         results=[SearchResult(title="T", url="https://x.test", snippet="Acme makes widgets.")],
     )
 
-    async def test_prose_sections_stream_as_text_fragments(self):
-        agent, _ = build_agent(stream_events=[text_event("Acme "), text_event("makes widgets.")])
-
-        chunks = [c async for c in agent.stream_section("overview", self.context)]
-
-        assert chunks == [TextDelta("Acme "), TextDelta("makes widgets.")]
-
-    async def test_list_sections_emit_each_entry_as_its_line_completes(self):
-        agent, _ = build_agent(
+    async def test_the_whole_briefing_comes_from_a_single_request(self):
+        """Five calls cost five round trips and re-sent the corpus five times."""
+        agent, fake = build_agent(
             stream_events=[
-                text_event('{"name": "Ada", "title": "CEO"}\n{"name": "Grace",'),
-                text_event(' "title": "CTO"}'),
+                text_event("##overview\nAcme makes widgets.\n"),
+                text_event('##key_people\n{"name": "Ada", "title": "CEO"}\n'),
+                text_event('##financials\n{"revenue": "$4.2B", "employee_count": null, '),
+                text_event('"market_cap": null, "yoy_growth": null}\n'),
             ]
         )
 
-        chunks = [c async for c in agent.stream_section("key_people", self.context)]
+        chunks = [item async for item in agent.write(self.context)]
+        sections = [section for section, _ in chunks]
 
-        assert chunks == [
-            ItemChunk({"name": "Ada", "title": "CEO"}),
-            ItemChunk({"name": "Grace", "title": "CTO"}),
-        ]
+        assert len(fake.calls) == 1, "the whole briefing must cost one request"
+        assert sections[0] == "overview"
+        assert ("key_people", ItemChunk({"name": "Ada", "title": "CEO"})) in chunks
+        assert (
+            "financials",
+            ValueChunk(
+                {
+                    "revenue": "$4.2B",
+                    "employee_count": None,
+                    "market_cap": None,
+                    "yoy_growth": None,
+                }
+            ),
+        ) in chunks
 
-    async def test_financials_come_back_whole_and_schema_validated(self):
-        payload = {"revenue": "$4.2B", "employee_count": "8,000", "market_cap": None, "yoy_growth": "18%"}
-        agent, fake = build_agent(stream_events=[text_event(json.dumps(payload))])
+    async def test_prose_still_streams_at_token_granularity(self):
+        agent, _ = build_agent(
+            stream_events=[
+                text_event("##overview\n"),
+                text_event("Acme "),
+                text_event("makes widgets."),
+            ]
+        )
 
-        chunks = [c async for c in agent.stream_section("financials", self.context)]
+        chunks = [chunk for _, chunk in [i async for i in agent.write(self.context)]]
 
-        assert chunks == [ValueChunk(payload)]
-        assert fake.calls[0]["response_format"]["mime_type"] == "application/json"
+        # Not one lump at the end of the line -- fragments arrive as they are sent.
+        assert TextDelta("Acme ") in chunks
+        assert TextDelta("makes widgets.") in chunks
 
-    async def test_unusable_financials_come_back_blank_rather_than_wrong(self):
-        agent, _ = build_agent(stream_events=[text_event("Revenue is roughly four billion.")])
-
-        chunks = [c async for c in agent.stream_section("financials", self.context)]
-
-        assert chunks == [ValueChunk(Financials().model_dump())]
-
-    @pytest.mark.parametrize("section", ["overview", "key_people", "news", "risks", "financials"])
-    async def test_every_section_prompt_carries_the_evidence_and_uses_no_tools(self, section):
+    async def test_writing_runs_on_the_writer_model_and_uses_no_tools(self):
         agent, fake = build_agent(stream_events=[])
+        agent._writer_model = "gemini-flash-lite-latest"
 
-        [c async for c in agent.stream_section(section, self.context)]
+        [c async for c in agent.write(self.context)]
 
         request = fake.calls[0]
-        assert "Acme makes widgets" in request["input"]
+        assert request["model"] == "gemini-flash-lite-latest"
         assert "tools" not in request
-        # Section writing is shallow work, and nothing needs retaining.
+        assert "Acme makes widgets" in request["input"]
+        # Shallow work, and nothing needs retaining.
         assert request["generation_config"]["thinking_level"] == "low"
         assert request["store"] is False
 
@@ -378,12 +385,12 @@ class TestProviderErrors:
         )
 
         with pytest.raises(QuotaExceededError):
-            [c async for c in agent.stream_section("overview", ResearchContext(company="Acme"))]
+            [c async for c in agent.write(ResearchContext(company="Acme"))]
 
-    async def test_a_quota_failure_while_writing_a_section_also_surfaces_as_quota(self):
+    async def test_a_quota_failure_while_writing_also_surfaces_as_quota(self):
         from google.genai._gaos.lib.compat_errors import RateLimitError
 
         agent = self.raising(self.transport_error(RateLimitError, 429))
 
         with pytest.raises(QuotaExceededError):
-            [c async for c in agent.stream_section("overview", ResearchContext(company="Acme"))]
+            [c async for c in agent.write(ResearchContext(company="Acme"))]

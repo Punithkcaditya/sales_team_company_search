@@ -21,9 +21,9 @@ pipeline, the SSE contract, and the frontend are unchanged:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -35,38 +35,31 @@ from google.genai._gaos.errors import GenAiError as InteractionAPIError
 # NOT subclasses of genai.errors.APIError or GenAiError, so catching only those
 # lets a 429 escape as an unhandled exception.
 from google.genai._gaos.lib.compat_errors import APIError as InteractionTransportError
-from pydantic import BaseModel, ValidationError
 
-from ..schemas import Financials, Section
+from ..schemas import Section
 from .base import (
     AgentError,
-    ItemChunk,
     QuotaExceededError,
     ResearchContext,
     SearchObserver,
     SectionChunk,
-    TextDelta,
-    ValueChunk,
 )
-from .jsonl import JsonLineBuffer
 from .prompts import (
     FINISH_RESEARCH_TOOL,
     RESEARCH_SYSTEM,
     RESEARCH_TASK,
     WEB_SEARCH_TOOL,
     WRITER_SYSTEM,
-    section_prompt,
     system_prompt,
+    write_all_prompt,
 )
+from .section_stream import SectionStreamParser
 from .search import SearchClient, SearchError, SearchResult
 
 logger = logging.getLogger(__name__)
 
 RESEARCH_MAX_TOKENS = 8_000
-SECTION_MAX_TOKENS = 2_000
-
-PROSE_SECTIONS: frozenset[str] = frozenset({"overview"})
-LIST_SECTIONS: frozenset[str] = frozenset({"key_people", "news", "risks"})
+BRIEFING_MAX_TOKENS = 4_000
 
 
 def as_gemini_tool(tool: dict[str, Any]) -> dict[str, Any]:
@@ -94,12 +87,16 @@ class GeminiResearchAgent:
         client: genai.Client,
         search: SearchClient,
         model: str,
+        writer_model: str | None = None,
         max_turns: int = 6,
         max_searches: int = 10,
     ) -> None:
         self._client = client
         self._search = search
         self._model = model
+        # Quotas are metered per model, so writing on a different (and faster)
+        # model both speeds the briefing up and draws on a separate allowance.
+        self._writer_model = writer_model or model
         self._max_turns = max_turns
         self._max_searches = max_searches
 
@@ -116,7 +113,9 @@ class GeminiResearchAgent:
                 system_instruction=system_prompt(RESEARCH_SYSTEM),
                 tools=RESEARCH_TOOLS,
                 max_tokens=RESEARCH_MAX_TOKENS,
-                thinking="medium",
+                # Choosing search queries is not deep reasoning, and every
+                # thinking token is latency the rep sits through.
+                thinking="low",
                 previous_interaction_id=previous_id,
             )
             previous_id = getattr(interaction, "id", None)
@@ -190,35 +189,29 @@ class GeminiResearchAgent:
 
     # ------------------------------------------------------------------ phase 2
 
-    async def stream_section(
-        self, section: Section, context: ResearchContext
-    ) -> AsyncIterator[SectionChunk]:
-        params = {
-            "system_instruction": system_prompt(WRITER_SYSTEM),
-            "prompt": section_prompt(section, context.company, context.corpus()),
-            "max_tokens": SECTION_MAX_TOKENS,
+    async def write(self, context: ResearchContext) -> AsyncIterator[tuple[Section, SectionChunk]]:
+        """All five sections from one streamed request.
+
+        Five separate calls cost five round trips and re-sent the whole search
+        corpus each time. One call with section markers keeps the streaming
+        behaviour -- prose token by token, list items one at a time -- at a
+        quarter of the requests.
+        """
+        parser = SectionStreamParser()
+        async for text in self._stream_text(
+            model=self._writer_model,
+            system_instruction=system_prompt(WRITER_SYSTEM),
+            prompt=write_all_prompt(context.company, context.corpus()),
+            max_tokens=BRIEFING_MAX_TOKENS,
             # The judgment happened in phase 1. Writing from evidence already
-            # gathered is a shallow task, and the rep is waiting.
-            "thinking": "low",
-        }
+            # gathered is shallow work, and the rep is waiting.
+            thinking="low",
+        ):
+            for item in parser.feed(text):
+                yield item
 
-        if section in PROSE_SECTIONS:
-            async for text in self._stream_text(**params):
-                yield TextDelta(text)
-
-        elif section in LIST_SECTIONS:
-            buffer = JsonLineBuffer()
-            async for text in self._stream_text(**params):
-                for value in buffer.feed(text):
-                    yield ItemChunk(value)
-            for value in buffer.flush():
-                yield ItemChunk(value)
-
-        else:
-            collected: list[str] = []
-            async for text in self._stream_text(**params, response_schema=Financials):
-                collected.append(text)
-            yield ValueChunk(_parse_financials("".join(collected)).model_dump())
+        for item in parser.flush():
+            yield item
 
     # ------------------------------------------------------------------ transport
 
@@ -253,8 +246,11 @@ class GeminiResearchAgent:
             request["previous_interaction_id"] = previous_interaction_id
 
         for attempt in range(_MAX_ATTEMPTS):
+            started = time.monotonic()
             try:
-                return await self._client.aio.interactions.create(**request)
+                result = await self._client.aio.interactions.create(**request)
+                logger.info("gemini %s call took %.1fs", self._model, time.monotonic() - started)
+                return result
             except (
                 genai_errors.APIError,
                 InteractionAPIError,
@@ -268,11 +264,11 @@ class GeminiResearchAgent:
     async def _stream_text(
         self,
         *,
+        model: str,
         system_instruction: str,
         prompt: str,
         max_tokens: int,
         thinking: str,
-        response_schema: type[BaseModel] | None = None,
     ) -> AsyncIterator[str]:
         """Text fragments from one streamed interaction. Section writing needs no
         tools and no history, so nothing is stored.
@@ -282,7 +278,7 @@ class GeminiResearchAgent:
         since replaying a half-written section would duplicate text on screen.
         """
         request: dict[str, Any] = {
-            "model": self._model,
+            "model": model,
             "input": prompt,
             "system_instruction": system_instruction,
             "stream": True,
@@ -292,22 +288,25 @@ class GeminiResearchAgent:
                 "thinking_level": thinking,
             },
         }
-        if response_schema is not None:
-            request["response_format"] = {
-                "type": "text",
-                "mime_type": "application/json",
-                "schema": response_schema.model_json_schema(),
-            }
-
         for attempt in range(_MAX_ATTEMPTS):
             emitted = False
+            started = time.monotonic()
             try:
                 stream = await self._client.aio.interactions.create(**request)
+                first: float | None = None
                 async for event in stream:
                     text = _text_of(event)
                     if text:
+                        if first is None:
+                            first = time.monotonic() - started
                         emitted = True
                         yield text
+                logger.info(
+                    "gemini %s stream: first token %.1fs, total %.1fs",
+                    model,
+                    first or -1,
+                    time.monotonic() - started,
+                )
                 return
             except (
                 genai_errors.APIError,
@@ -354,33 +353,6 @@ def _format_results(query: str, results: list[SearchResult]) -> str:
     return f"Results for {query!r}:\n{body}"
 
 
-def _parse_financials(text: str) -> Financials:
-    """Empty financials beat wrong ones, so every failure path returns blanks."""
-    try:
-        return Financials.model_validate_json(text)
-    except ValidationError:
-        pass
-    extracted = _extract_json_object(text)
-    if extracted is not None:
-        try:
-            return Financials.model_validate(extracted)
-        except ValidationError:
-            pass
-    logger.warning("Financials failed validation: %r", text[:200])
-    return Financials()
-
-
-def _extract_json_object(text: str) -> dict[str, Any] | None:
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end <= start:
-        return None
-    try:
-        parsed = json.loads(text[start : end + 1])
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
 _MAX_ATTEMPTS = 3
 _MAX_BACKOFF_SECONDS = 30.0
 # The free tier's 429 carries its own cooldown: "Please retry in 17.47s".
@@ -392,7 +364,7 @@ async def _wait_to_retry(exc: Exception, attempt: int) -> bool:
 
     The free tier meters requests per minute, so a 429 is a pause rather than a
     dead end -- and the server states how long to wait. Honouring that turns a
-    burst of section writes into a short delay instead of a failed briefing.
+    burst of requests into a short delay instead of a failed briefing.
     """
     if attempt >= _MAX_ATTEMPTS - 1:
         return False

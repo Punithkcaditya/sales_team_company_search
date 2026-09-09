@@ -1,7 +1,7 @@
 """Turns an agent's output into the stream of events the frontend renders.
 
 This module owns ordering, validation, and persistence. It knows nothing about
-Claude or Serper -- swap the agent and this is unchanged.
+Gemini, Claude, or Serper -- swap the agent and this is unchanged.
 """
 
 from __future__ import annotations
@@ -24,7 +24,15 @@ from ..schemas import (
     RiskItem,
     Section,
 )
-from .base import AgentError, ItemChunk, QuotaExceededError, ResearchAgent, ResearchContext, TextDelta, ValueChunk
+from .base import (
+    AgentError,
+    ItemChunk,
+    QuotaExceededError,
+    ResearchAgent,
+    ResearchContext,
+    TextDelta,
+    ValueChunk,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,76 +93,106 @@ class ResearchPipeline:
         yield events.status("writing", f"Writing the briefing on {context.company}…")
 
         sections = ReportSections()
-        failures = 0
-        for section in SECTION_ORDER:
-            try:
-                async for event in self._run_section(section, context, sections):
+        writer = _SectionWriter(sections)
+        try:
+            async for section, chunk in self._agent.write(context):
+                for event in writer.accept(section, chunk):
                     yield event
-            except QuotaExceededError as exc:
-                # Further section calls would consume attempts without fixing the quota.
-                yield events.error(exc.code, str(exc))
-                return
-            except Exception:
-                # One flaky section should not cost the rep the other four.
-                logger.exception("Section %s failed for %r", section, context.company)
-                failures += 1
-                yield events.section_end(section, _section_value(sections, section))
-
-        if failures == len(SECTION_ORDER):
-            yield events.error(
-                "agent_error",
-                "The research service was unreachable, so no briefing could be written.",
-            )
+        except QuotaExceededError as exc:
+            yield events.error(exc.code, str(exc))
             return
+        except Exception:
+            logger.exception("Writing the briefing failed for %r", context.company)
+            if not writer.has_content:
+                yield events.error(
+                    "agent_error",
+                    "The research service was unreachable, so no briefing could be written.",
+                )
+                return
+        # Close whatever is still open, and resolve sections the model skipped,
+        # so the UI never leaves a section spinning.
+        for event in writer.finish():
+            yield event
 
         report = await asyncio.to_thread(
             self._repository.create, context.company, sections, context.sources()
         )
         yield events.done(report.model_dump())
 
-    async def _run_section(
-        self, section: Section, context: ResearchContext, sections: ReportSections
-    ) -> AsyncIterator[ResearchEvent]:
-        yield events.section_start(section)
 
-        if section in _LIST_SECTIONS:
-            async for event in self._run_list_section(section, context, sections):
-                yield event
-        elif section == "financials":
-            async for chunk in self._agent.stream_section(section, context):
-                if isinstance(chunk, ValueChunk):
-                    sections.financials = _coerce(Financials, chunk.value) or Financials()
-        else:
-            text: list[str] = []
-            async for chunk in self._agent.stream_section(section, context):
-                if isinstance(chunk, TextDelta):
-                    text.append(chunk.text)
-                    yield events.section_delta(section, chunk.text)
-            sections.overview = "".join(text).strip()
+class _SectionWriter:
+    """Turns a stream of `(section, chunk)` pairs into section events.
 
-        yield events.section_end(section, _section_value(sections, section))
+    The agent may write every section in one response, so section boundaries are
+    inferred from the tags rather than from separate calls: a new tag closes the
+    previous section and opens the next.
+    """
 
-    async def _run_list_section(
-        self, section: Section, context: ResearchContext, sections: ReportSections
-    ) -> AsyncIterator[ResearchEvent]:
-        model, limit = _LIST_SECTIONS[section]
-        collected: list[BaseModel] = []
+    def __init__(self, sections: ReportSections) -> None:
+        self._sections = sections
+        self._current: Section | None = None
+        self._started: list[Section] = []
+        self._text: list[str] = []
+        self._items: list[BaseModel] = []
 
-        async for chunk in self._agent.stream_section(section, context):
-            if not isinstance(chunk, ItemChunk) or len(collected) >= limit:
-                continue
-            item = _coerce(model, chunk.value)
-            if item is None:
-                continue
-            collected.append(item)
-            yield events.section_item(section, item.model_dump())
+    @property
+    def has_content(self) -> bool:
+        return bool(self._started)
 
-        # Risks are stored as plain strings; the wrapper object exists only to
-        # give the model a stable line format to emit.
-        if section == "risks":
-            sections.risks = [item.risk for item in collected]  # type: ignore[attr-defined]
-        else:
-            setattr(sections, section, collected)
+    def accept(self, section: Section, chunk: object) -> list[ResearchEvent]:
+        out: list[ResearchEvent] = []
+
+        if section != self._current:
+            out.extend(self._close_current())
+            self._current = section
+            if section not in self._started:
+                self._started.append(section)
+                out.append(events.section_start(section))
+
+        if isinstance(chunk, TextDelta):
+            self._text.append(chunk.text)
+            out.append(events.section_delta(section, chunk.text))
+
+        elif isinstance(chunk, ItemChunk) and section in _LIST_SECTIONS:
+            model, limit = _LIST_SECTIONS[section]
+            if len(self._items) < limit:
+                item = _coerce(model, chunk.value)
+                if item is not None:
+                    self._items.append(item)
+                    out.append(events.section_item(section, item.model_dump()))
+
+        elif isinstance(chunk, ValueChunk) and section == "financials":
+            self._sections.financials = _coerce(Financials, chunk.value) or Financials()
+
+        return out
+
+    def finish(self) -> list[ResearchEvent]:
+        out = self._close_current()
+        for section in SECTION_ORDER:
+            if section not in self._started:
+                # The model skipped it entirely; report it as empty rather than
+                # leaving its skeleton on screen forever.
+                out.append(events.section_start(section))
+                out.append(events.section_end(section, _section_value(self._sections, section)))
+        return out
+
+    def _close_current(self) -> list[ResearchEvent]:
+        section, self._current = self._current, None
+        if section is None:
+            return []
+
+        if section == "overview":
+            self._sections.overview = "".join(self._text).strip()
+        elif section == "risks":
+            # Risks are stored as plain strings; the wrapper object exists only
+            # to give the model a stable line format to emit.
+            self._sections.risks = [item.risk for item in self._items]  # type: ignore[attr-defined]
+        elif section in _LIST_SECTIONS:
+            setattr(self._sections, section, list(self._items))
+
+        self._text.clear()
+        self._items = []
+        return [events.section_end(section, _section_value(self._sections, section))]
 
 
 def _coerce(model: type[BaseModel], value: object) -> BaseModel | None:

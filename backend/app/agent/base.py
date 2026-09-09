@@ -79,9 +79,12 @@ SectionChunk = TextDelta | ItemChunk | ValueChunk
 class ResearchAgent(Protocol):
     async def gather(self, company: str, on_search: SearchObserver) -> ResearchContext: ...
 
-    def stream_section(
-        self, section: Section, context: ResearchContext
-    ) -> AsyncIterator[SectionChunk]: ...
+    def write(self, context: ResearchContext) -> AsyncIterator[tuple[Section, SectionChunk]]:
+        """Stream the whole briefing, each chunk tagged with its section.
+
+        Sections arrive in `SECTION_ORDER`.
+        """
+        ...
 
 
 class AgentError(RuntimeError):

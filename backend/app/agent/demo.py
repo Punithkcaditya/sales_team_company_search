@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 
-from ..schemas import Section
+from ..schemas import SECTION_ORDER, Section
 from .base import ItemChunk, ResearchContext, SearchObserver, SectionChunk, TextDelta, ValueChunk
 from .search import SearchResult
 
@@ -59,7 +59,12 @@ class DemoResearchAgent:
             )
         return context
 
-    async def stream_section(
+    async def write(self, context: ResearchContext) -> AsyncIterator[tuple[Section, SectionChunk]]:
+        for section in SECTION_ORDER:
+            async for chunk in self._section(section, context):
+                yield section, chunk
+
+    async def _section(
         self, section: Section, context: ResearchContext
     ) -> AsyncIterator[SectionChunk]:
         company = context.company

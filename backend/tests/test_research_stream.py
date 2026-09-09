@@ -62,19 +62,21 @@ async def test_unresearchable_input_ends_in_a_readable_error_and_saves_nothing(c
     assert (await client.get("/api/reports")).json() == []
 
 
-@pytest.mark.parametrize("agent", [FakeAgent(fail_sections=("news",))])
-async def test_one_failing_section_does_not_lose_the_other_four(client, agent):
+@pytest.mark.parametrize("agent", [FakeAgent(fail_at="news")])
+async def test_a_failure_partway_through_keeps_what_was_already_written(client, agent):
+    """The briefing is one stream now, so a failure truncates it -- but the
+    sections already written are still worth saving."""
     events = await collect_events(client, "Acme")
     report = events_named(events, "done")[0]["report"]
 
-    assert report["sections"]["news"] == []
     assert report["sections"]["overview"] == "Acme makes widgets."
     assert report["sections"]["key_people"]
-    # The section still closes, so the UI never leaves a spinner running.
+    assert report["sections"]["news"] == []
+    # Every section still closes, so the UI never leaves a spinner running.
     assert [d["section"] for d in events_named(events, "section_end")] == list(SECTION_ORDER)
 
 
-@pytest.mark.parametrize("agent", [FakeAgent(fail_sections=tuple(SECTION_ORDER))])
+@pytest.mark.parametrize("agent", [FakeAgent(fail_at="overview")])
 async def test_a_total_provider_outage_is_reported_and_saves_nothing(client, agent):
     events = await collect_events(client, "Acme")
 

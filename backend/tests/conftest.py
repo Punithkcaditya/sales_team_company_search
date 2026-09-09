@@ -9,6 +9,7 @@ import pytest
 from app.agent.base import AgentError, ItemChunk, ResearchContext, TextDelta, ValueChunk
 from app.agent.search import SearchResult
 from app.config import Settings, get_settings
+from app.schemas import SECTION_ORDER
 from app.db import Database
 from app.deps import ActiveResearch
 from app.main import create_app
@@ -27,15 +28,20 @@ class FakeAgent:
         self,
         *,
         researchable: bool = True,
-        fail_sections: tuple[str, ...] = (),
+        fail_at: str | None = None,
         people: list[dict] | None = None,
         news: list[dict] | None = None,
         risks: list[dict] | None = None,
     ) -> None:
         self.researchable = researchable
-        self.fail_sections = fail_sections
+        # Where the single writing stream blows up, if anywhere.
+        self.fail_at = fail_at
         self.people = people if people is not None else [{"name": "Ada Lovelace", "title": "CEO"}]
-        self.news = news if news is not None else [{"headline": "Raised a Series C", "source_url": "https://x.test/a"}]
+        self.news = (
+            news
+            if news is not None
+            else [{"headline": "Raised a Series C", "source_url": "https://x.test/a"}]
+        )
         self.risks = risks if risks is not None else [{"risk": "Pending antitrust review"}]
         self.gathered: list[str] = []
 
@@ -53,25 +59,27 @@ class FakeAgent:
             ],
         )
 
-    async def stream_section(self, section: str, context: ResearchContext) -> AsyncIterator:
-        if section in self.fail_sections:
-            raise AgentError("provider exploded")
+    async def write(self, context: ResearchContext) -> AsyncIterator:
+        for section in SECTION_ORDER:
+            if section == self.fail_at:
+                raise AgentError("provider exploded")
+            for chunk in self._chunks(section):
+                yield section, chunk
+
+    def _chunks(self, section: str) -> list:
         if section == "overview":
-            for part in ("Acme ", "makes ", "widgets."):
-                yield TextDelta(part)
-        elif section == "key_people":
-            for person in self.people:
-                yield ItemChunk(person)
-        elif section == "news":
-            for item in self.news:
-                yield ItemChunk(item)
-        elif section == "risks":
-            for risk in self.risks:
-                yield ItemChunk(risk)
-        else:
-            yield ValueChunk(
+            return [TextDelta(part) for part in ("Acme ", "makes ", "widgets.")]
+        if section == "key_people":
+            return [ItemChunk(person) for person in self.people]
+        if section == "news":
+            return [ItemChunk(item) for item in self.news]
+        if section == "risks":
+            return [ItemChunk(risk) for risk in self.risks]
+        return [
+            ValueChunk(
                 {"revenue": "$10M", "employee_count": "50", "market_cap": None, "yoy_growth": "30%"}
             )
+        ]
 
 
 @pytest.fixture

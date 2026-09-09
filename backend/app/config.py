@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     # runs through Serper instead -- both keys are free and need no card.
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-flash-latest"
+    # Writing from evidence already gathered is shallow work, and quotas are
+    # metered per model -- so the writing pass runs on a faster model with its
+    # own allowance. Set it equal to gemini_model to use just one.
+    gemini_writer_model: str = "gemini-flash-lite-latest"
 
     # Anthropic needs a second key for search, since it has no built-in one.
     anthropic_api_key: str | None = None

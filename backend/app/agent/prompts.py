@@ -17,7 +17,8 @@ Search strategy:
 - You need coverage of: what the company does, its executive team, news from the
   last 12 months, revenue/headcount/market cap/growth, and risks such as
   litigation, breaches, layoffs, or regulatory scrutiny.
-- Issue several searches in parallel when they are independent.
+- Issue ALL of your searches in one turn, as parallel calls. Every extra
+  turn is another round trip the rep waits through.
 - Today is {today}. Prefer recent sources; a briefing built on three-year-old
   news is worse than useless.
 
@@ -183,3 +184,43 @@ def section_prompt(section: str, company: str, corpus: str) -> str:
         corpus=corpus,
         instruction=_SECTION_INSTRUCTIONS[section],
     )
+
+
+WRITE_ALL_INSTRUCTION = """Write the full briefing. Output the five sections below, in this order, each
+introduced by its marker on a line of its own. Output nothing else -- no
+preamble, no closing remarks, no markdown headings other than the markers.
+
+##overview
+3-5 sentences of plain prose: what the company actually does, its industry, core
+products, who it sells to, and where it sits against competitors. A briefing for
+someone walking into a meeting, not an encyclopedia entry. No bullets.
+
+##key_people
+One JSON object per line, maximum 6, only people the findings actually name:
+{{"name": "Jane Doe", "title": "Chief Executive Officer"}}
+
+##news
+One JSON object per line, 3-4 of them, newest first:
+{{"headline": "Acquired Foo Inc. for $2.1B to expand into payments", "published": "March 2026", "source_url": "https://..."}}
+Each headline must be a full, specific statement, not a topic label. Use a
+source_url from the findings. Set "published" to null if no date is given. Skip
+anything you cannot source.
+
+##financials
+Exactly one JSON object:
+{{"revenue": "$4.2B", "employee_count": "~8,000", "market_cap": null, "yoy_growth": "18%"}}
+Short human-readable strings. Use null where the findings do not support a
+figure -- private companies have no market cap, and a guessed number destroys
+the rep's credibility. Never estimate.
+
+##risks
+One JSON object per line, 2-3 of them:
+{{"risk": "Facing an FTC inquiry into its data-sharing practices, opened January 2026"}}
+Each one specific and grounded in the findings, not generic industry commentary.
+
+If the findings contain nothing usable for a section, still emit its marker and
+leave it empty. Never invent a name, a number, or a date."""
+
+
+def write_all_prompt(company: str, corpus: str) -> str:
+    return _CONTEXT_BLOCK.format(company=company, corpus=corpus, instruction=WRITE_ALL_INSTRUCTION)

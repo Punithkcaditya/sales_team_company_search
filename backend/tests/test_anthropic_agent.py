@@ -190,6 +190,12 @@ class TestGather:
 
 
 class TestSectionStreaming:
+    """Exercises one section at a time.
+
+    `write` loops these five, so testing the per-section mechanics directly
+    keeps each case about one output shape rather than five.
+    """
+
     context = ResearchContext(
         company="Acme",
         results=[SearchResult(title="T", url="https://x.test", snippet="S")],
@@ -199,7 +205,7 @@ class TestSectionStreaming:
         agent, fake = build_agent([])
         fake.stream_text = ["Acme ", "makes ", "widgets."]
 
-        chunks = [c async for c in agent.stream_section("overview", self.context)]
+        chunks = [c async for c in agent._stream_one("overview", self.context)]
 
         assert chunks == [TextDelta("Acme "), TextDelta("makes "), TextDelta("widgets.")]
 
@@ -207,7 +213,7 @@ class TestSectionStreaming:
         agent, fake = build_agent([])
         fake.stream_text = ['{"name": "Ada", "title": "CEO"}\n{"name": "Grace",', ' "title": "CTO"}']
 
-        chunks = [c async for c in agent.stream_section("key_people", self.context)]
+        chunks = [c async for c in agent._stream_one("key_people", self.context)]
 
         assert chunks == [
             ItemChunk({"name": "Ada", "title": "CEO"}),
@@ -218,7 +224,7 @@ class TestSectionStreaming:
         agent, fake = build_agent([])
         fake.parsed = Financials(revenue="$4.2B", employee_count="8,000", market_cap=None, yoy_growth="18%")
 
-        chunks = [c async for c in agent.stream_section("financials", self.context)]
+        chunks = [c async for c in agent._stream_one("financials", self.context)]
 
         assert chunks == [
             ValueChunk(
@@ -231,7 +237,7 @@ class TestSectionStreaming:
         agent, fake = build_agent([])
         fake.parsed = None
 
-        chunks = [c async for c in agent.stream_section("financials", self.context)]
+        chunks = [c async for c in agent._stream_one("financials", self.context)]
 
         assert chunks == [ValueChunk({"revenue": None, "employee_count": None, "market_cap": None, "yoy_growth": None})]
 
@@ -241,7 +247,7 @@ class TestSectionStreaming:
         fake.stream_text = []
         fake.parsed = Financials()
 
-        [c async for c in agent.stream_section(section, self.context)]
+        [c async for c in agent._stream_one(section, self.context)]
 
         call = (fake.calls + fake.parse_calls)[0]
         prompt = call["messages"][0]["content"]

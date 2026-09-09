@@ -20,21 +20,20 @@ async def test_quota_failure_during_gather_is_identifiable_and_saves_nothing(rep
     assert repository.list() == []
 
 
-async def test_quota_failure_mid_report_stops_further_model_calls(repository):
-    calls = []
-
+async def test_quota_failure_mid_report_stops_the_run_and_saves_nothing(repository):
     class LimitedAgent(FakeAgent):
-        async def stream_section(self, section, context):
-            calls.append(section)
-            if section == "key_people":
-                raise QuotaExceededError("Provider quota reached.")
-            async for chunk in super().stream_section(section, context):
-                yield chunk
+        async def write(self, context):
+            async for section, chunk in super().write(context):
+                if section == "key_people":
+                    raise QuotaExceededError("Provider quota reached.")
+                yield section, chunk
 
     events = await collect(LimitedAgent(), repository)
-    assert calls == ["overview", "key_people"]
+
     assert events[-1].event == "error"
     assert events[-1].data["code"] == "quota_exceeded"
+    # Whatever had streamed is still shown; it just is not saved, because a
+    # briefing missing four of five sections is not worth keeping.
     assert any(e.event == "section_delta" for e in events)
     assert repository.list() == []
 

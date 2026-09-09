@@ -11,6 +11,7 @@ import anthropic
 import httpx
 from fastapi import Request
 from google import genai
+from google.genai.types import HttpOptions, HttpRetryOptions
 
 from .agent.anthropic_agent import AnthropicResearchAgent
 from .agent.base import ResearchAgent
@@ -68,12 +69,23 @@ def build_agent(settings: Settings) -> tuple[ResearchAgent, list]:
         return DemoResearchAgent(), []
 
     if provider == "gemini":
-        logger.info("Using Gemini (%s) with Serper search.", settings.gemini_model)
+        logger.info(
+            "Using Gemini: %s for research, %s for writing, with Serper search.",
+            settings.gemini_model,
+            settings.gemini_writer_model,
+        )
         http_client = httpx.AsyncClient(timeout=15.0)
         agent = GeminiResearchAgent(
-            client=genai.Client(api_key=settings.gemini_api_key),
+            # The SDK retries 429s on its own schedule, which compounds with the
+            # agent's own backoff into minutes of waiting. The agent honours the
+            # cooldown the server states, so it owns retries alone.
+            client=genai.Client(
+                api_key=settings.gemini_api_key,
+                http_options=HttpOptions(retry_options=HttpRetryOptions(attempts=1)),
+            ),
             search=SerperSearchClient(settings.serper_api_key or "", client=http_client),
             model=settings.gemini_model,
+            writer_model=settings.gemini_writer_model,
             max_turns=settings.max_research_turns,
             max_searches=settings.max_searches,
         )

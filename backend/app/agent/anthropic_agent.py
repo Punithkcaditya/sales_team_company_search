@@ -22,7 +22,7 @@ from collections.abc import AsyncIterator
 
 import anthropic
 
-from ..schemas import Financials, Section
+from ..schemas import SECTION_ORDER, Financials, Section
 from .base import (
     AgentError,
     ItemChunk,
@@ -170,7 +170,17 @@ class AnthropicResearchAgent:
 
     # ------------------------------------------------------------------ phase 2
 
-    async def stream_section(
+    async def write(self, context: ResearchContext) -> AsyncIterator[tuple[Section, SectionChunk]]:
+        """One call per section.
+
+        Claude is not on a free-tier request budget here, so the extra round
+        trips buy tighter, better-grounded prompts rather than costing quota.
+        """
+        for section in SECTION_ORDER:
+            async for chunk in self._stream_one(section, context):
+                yield section, chunk
+
+    async def _stream_one(
         self, section: Section, context: ResearchContext
     ) -> AsyncIterator[SectionChunk]:
         prompt = section_prompt(section, context.company, context.corpus())
