@@ -102,6 +102,20 @@ curl http://localhost:8000/api/health
 is missing — the server log says which. `LLM_PROVIDER=demo` forces demo mode
 even with keys present.
 
+### Two limits, and which one you hit
+
+The banner above the search box shows this app's **own** daily limit, default 50
+briefings, resetting at 00:00 UTC. That is a deliberate guard, not a bug and not
+a spending cap — the free tier cannot be billed. It exists so a day of clicking
+cannot quietly exhaust the provider allowance. `DAILY_RESEARCH_LIMIT=0` removes
+it.
+
+Separately, Gemini's free tier is rate limited **per minute** (roughly 20
+requests per project). A briefing costs about four, so several in quick
+succession can hit it even with app allowance to spare. The agent reads the
+cooldown the API returns and waits it out; if it is genuinely exhausted the UI
+says so and the run is not saved.
+
 ---
 
 ## Choices

@@ -27,14 +27,14 @@ export function UsageBanner({ usage, unavailable, onRefresh }: Props) {
           {demo ? "Demo mode" : `Live research · ${provider}`}
         </span>
         {!demo && usage.remaining !== null && <span className="usage__count">
-          {usage.remaining} of {usage.daily_limit} app searches left today
+          {usage.remaining} of {usage.daily_limit} briefings left today
         </span>}
       </div>
       <p className="usage__detail">
         {demo ? "Sample briefings only. No AI tokens or live search calls are used."
           : usage.daily_limit === null ? "Provider token balance is unavailable here. Requests are subject to your provider's limits."
-          : exhausted ? `Today's shared app allowance is exhausted. Resets ${reset} (your local time). Saved briefings are still available.`
-          : `App allowance shared by all visitors · resets ${reset} (your local time). Provider limits may be reached sooner.`}
+          : exhausted ? `This app's daily limit is reached. Resets ${reset} (your local time). Saved briefings are still available.`
+          : `This app's own daily limit, resetting ${reset} (your local time). Gemini's free tier is also rate limited per minute, so it may pause sooner.`}
       </p>
       {exhausted && <button type="button" className="usage__refresh" onClick={onRefresh}>Refresh availability</button>}
     </div>

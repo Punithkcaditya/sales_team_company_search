@@ -64,7 +64,7 @@ async def research(
                 status.HTTP_429_TOO_MANY_REQUESTS,
                 detail={
                     "code": "daily_limit",
-                    "message": "Today's shared app research allowance is exhausted. It resets at 00:00 UTC.",
+                    "message": "This app's daily research limit is reached. It resets at 00:00 UTC.",
                 },
             )
     except Exception:

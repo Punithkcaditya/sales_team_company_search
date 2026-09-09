@@ -36,8 +36,10 @@ class Settings(BaseSettings):
     # money forever on one request.
     max_research_turns: int = 6
     max_searches: int = 10
-    # Shared app allowance, not the provider's quota. Zero disables this app limit.
-    daily_research_limit: int = Field(default=20, ge=0)
+    # A guard on this app's own usage, not the provider's quota and not a
+    # spending limit -- the free tier cannot be billed. It stops a day's
+    # clicking from exhausting the provider's allowance. Zero disables it.
+    daily_research_limit: int = Field(default=50, ge=0)
 
     @property
     def provider(self) -> str:

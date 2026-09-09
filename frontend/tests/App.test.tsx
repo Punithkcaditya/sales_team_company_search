@@ -167,12 +167,12 @@ describe("a research run", () => {
   it("updates the shared allowance after a live attempt", async () => {
     backend.usage = { ...backend.usage, mode: "live", provider: "gemini", daily_limit: 20, remaining: 20, resets_at: "2026-09-10T00:00:00Z" };
     render(<App />);
-    expect(await screen.findByText("20 of 20 app searches left today")).toBeInTheDocument();
+    expect(await screen.findByText("20 of 20 briefings left today")).toBeInTheDocument();
     const stream = await startResearch("Stripe");
     await stream.push("done", { report: report() });
     await stream.close();
-    expect(await screen.findByText("19 of 20 app searches left today")).toBeInTheDocument();
-    expect(screen.getByText(/Provider limits may be reached sooner/)).toBeInTheDocument();
+    expect(await screen.findByText("19 of 20 briefings left today")).toBeInTheDocument();
+    expect(screen.getByText(/Gemini's free tier is also rate limited per minute/)).toBeInTheDocument();
   });
   it("shows progress, renders sections as they stream, then saves to history", async () => {
     render(<App />);
@@ -275,7 +275,7 @@ describe("things going wrong", () => {
     backend.usage = { ...backend.usage, mode: "live", provider: "gemini", daily_limit: 20, used_today: 20, remaining: 0, resets_at: "2026-09-10T00:00:00Z" };
     backend.seed(report({ company: "Saved company" }));
     render(<App />);
-    expect(await screen.findByText("0 of 20 app searches left today")).toBeInTheDocument();
+    expect(await screen.findByText("0 of 20 briefings left today")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Stripe" })).toBeDisabled();
     const user = userEvent.setup();
     await user.type(screen.getByRole("textbox", { name: /company name/i }), "New company");
@@ -285,7 +285,7 @@ describe("things going wrong", () => {
     backend.usage.remaining = 20;
     backend.usage.used_today = 0;
     await user.click(screen.getByRole("button", { name: "Refresh availability" }));
-    expect(await screen.findByText("20 of 20 app searches left today")).toBeInTheDocument();
+    expect(await screen.findByText("20 of 20 briefings left today")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Research" })).toBeEnabled();
   });
   it("explains an unresearchable company gently and saves nothing", async () => {
