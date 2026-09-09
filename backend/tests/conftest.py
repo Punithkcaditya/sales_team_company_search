@@ -20,7 +20,7 @@ class FakeAgent:
     """A scripted stand-in for the real agent.
 
     Tests drive behaviour through the constructor rather than by patching the
-    Anthropic SDK, so they assert on the pipeline's contract instead of on how
+    provider SDK, so they assert on the pipeline's contract rather than on how
     the agent happens to call its provider.
     """
 
@@ -86,7 +86,6 @@ class FakeAgent:
 def settings() -> Settings:
     return Settings(
         gemini_api_key=None,
-        anthropic_api_key=None,
         serper_api_key=None,
         llm_provider="demo",
         database_path=":memory:",

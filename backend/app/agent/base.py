@@ -1,7 +1,7 @@
 """The seam between the research pipeline and whichever LLM sits behind it.
 
-`ResearchPipeline` only knows about this protocol, so the Anthropic agent and
-the demo agent are interchangeable and tests can inject a fake.
+`ResearchPipeline` only knows about this protocol, so the live agent and the
+demo agent are interchangeable and tests can inject a fake.
 """
 
 from __future__ import annotations
@@ -31,9 +31,8 @@ class ResearchContext:
     note: str = ""
     queries: list[str] = field(default_factory=list)
     results: list[SearchResult] = field(default_factory=list)
-    # Providers differ in what the search phase hands back: Gemini searches
-    # inside the model and returns written notes, Anthropic returns the raw
-    # hits. Sections are written from whichever of the two exists.
+    # Set when the search phase hands back written notes rather than raw hits.
+    # Sections are written from whichever of the two exists.
     findings: str = ""
 
     def corpus(self) -> str:

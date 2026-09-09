@@ -3,7 +3,7 @@
 It implements the same `ResearchAgent` protocol and emits the same chunk types
 at roughly the same pace as the real one, so every state the UI has to handle --
 searching, per-item streaming, an unresearchable company -- is reachable without
-credentials. The real agent in `anthropic_agent.py` is what should be reviewed;
+credentials. The real agent in `gemini_agent.py` is what should be reviewed;
 this exists so the app runs end to end for someone who has no keys.
 """
 

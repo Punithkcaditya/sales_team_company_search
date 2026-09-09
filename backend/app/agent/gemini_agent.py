@@ -7,8 +7,8 @@ through Serper (Google results as JSON), handed to the model as a `web_search`
 function it can call. That keeps the whole app on free tiers, and makes the
 research loop something you can read rather than something hidden in the model.
 
-Two phases, the same `ResearchAgent` protocol as the Anthropic agent, so the
-pipeline, the SSE contract, and the frontend are unchanged:
+Two phases behind the `ResearchAgent` protocol, so the pipeline, the SSE
+contract, and the frontend know nothing about the provider:
 
 1. `gather` runs the tool loop. Gemini decides what to search for; each query is
    forwarded to the UI as it is issued, and the loop ends when the model calls

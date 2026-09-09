@@ -8,7 +8,7 @@ import pytest
 
 from app.config import Settings
 
-BLANK = {"anthropic_api_key": None, "serper_api_key": None, "gemini_api_key": None, "_env_file": None}
+BLANK = {"serper_api_key": None, "gemini_api_key": None, "_env_file": None}
 
 
 def settings(**over) -> Settings:
@@ -19,16 +19,12 @@ def settings(**over) -> Settings:
     "keys, expected",
     [
         ({}, "demo"),
-        # Neither model provider can search on its own -- Gemini's built-in
-        # google_search has no free-tier quota -- so a model key alone is not
-        # enough to run, and half-configured never means a half-working app.
+        # The model cannot search on its own -- the built-in google_search tool
+        # has no free-tier quota -- so one key alone is not enough to run, and
+        # half-configured never means a half-working app.
         ({"gemini_api_key": "g"}, "demo"),
-        ({"anthropic_api_key": "a"}, "demo"),
         ({"serper_api_key": "s"}, "demo"),
         ({"gemini_api_key": "g", "serper_api_key": "s"}, "gemini"),
-        ({"anthropic_api_key": "a", "serper_api_key": "s"}, "anthropic"),
-        # Gemini wins when both model keys are present: it is the free one.
-        ({"gemini_api_key": "g", "anthropic_api_key": "a", "serper_api_key": "s"}, "gemini"),
     ],
 )
 def test_provider_is_chosen_from_the_keys_actually_present(keys, expected):
@@ -39,7 +35,7 @@ def test_no_keys_means_demo_mode_and_therefore_no_paid_call():
     assert settings().demo_mode is True
 
 
-@pytest.mark.parametrize("provider", ["gemini", "anthropic", "demo"])
+@pytest.mark.parametrize("provider", ["gemini", "demo"])
 def test_an_explicit_provider_overrides_auto_detection(provider):
     pinned = settings(llm_provider=provider, gemini_api_key="g", serper_api_key="s")
     assert pinned.provider == provider

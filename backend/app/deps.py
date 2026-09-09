@@ -7,13 +7,11 @@ import logging
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 
-import anthropic
 import httpx
 from fastapi import Request
 from google import genai
 from google.genai.types import HttpOptions, HttpRetryOptions
 
-from .agent.anthropic_agent import AnthropicResearchAgent
 from .agent.base import ResearchAgent
 from .agent.demo import DemoResearchAgent
 from .agent.gemini_agent import GeminiResearchAgent
@@ -57,7 +55,7 @@ def build_agent(settings: Settings) -> tuple[ResearchAgent, list]:
     """Return the agent for the configured provider, plus anything to close."""
     provider = settings.provider
 
-    if provider in ("gemini", "anthropic") and not settings.serper_api_key:
+    if provider == "gemini" and not settings.serper_api_key:
         # Pinning LLM_PROVIDER can select a model provider without the search key
         # it needs. Every search would fail and every company would come back
         # "not found" -- so say so plainly instead of serving broken research.
@@ -91,18 +89,6 @@ def build_agent(settings: Settings) -> tuple[ResearchAgent, list]:
         )
         return agent, [http_client.aclose]
 
-    if provider == "anthropic":
-        logger.info("Using Claude (%s) with Serper search.", settings.anthropic_model)
-        http_client = httpx.AsyncClient(timeout=15.0)
-        anthropic_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-        agent = AnthropicResearchAgent(
-            client=anthropic_client,
-            search=SerperSearchClient(settings.serper_api_key or "", client=http_client),
-            model=settings.anthropic_model,
-            max_turns=settings.max_research_turns,
-            max_searches=settings.max_searches,
-        )
-        return agent, [http_client.aclose, anthropic_client.close]
 
     logger.warning("No API key set - running in demo mode with canned research.")
     return DemoResearchAgent(), []

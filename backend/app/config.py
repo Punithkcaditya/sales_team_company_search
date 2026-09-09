@@ -24,12 +24,10 @@ class Settings(BaseSettings):
     # own allowance. Set it equal to gemini_model to use just one.
     gemini_writer_model: str = "gemini-flash-lite-latest"
 
-    # Anthropic needs a second key for search, since it has no built-in one.
-    anthropic_api_key: str | None = None
     serper_api_key: str | None = None
-    anthropic_model: str = "claude-opus-5"
 
-    # "auto" picks whichever provider has credentials; set it explicitly to pin one.
+    # "auto" runs live research when both keys are present; "demo" forces the
+    # canned agent regardless.
     llm_provider: str = "auto"
     database_path: str = str(DEFAULT_DATABASE)
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
@@ -43,18 +41,16 @@ class Settings(BaseSettings):
 
     @property
     def provider(self) -> str:
-        """Which agent implementation to run: "gemini", "anthropic", or "demo".
+        """Which agent implementation to run: "gemini" or "demo".
 
         Demo mode is the fallback when nothing is configured. It swaps the
-        provider implementation, not the pipeline -- the real agents are
+        provider implementation, not the pipeline -- the real agent is
         untouched either way.
         """
         if self.llm_provider != "auto":
             return self.llm_provider
         if self.gemini_api_key and self.serper_api_key:
             return "gemini"
-        if self.anthropic_api_key and self.serper_api_key:
-            return "anthropic"
         return "demo"
 
     @property

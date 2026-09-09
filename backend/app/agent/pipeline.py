@@ -1,7 +1,7 @@
 """Turns an agent's output into the stream of events the frontend renders.
 
 This module owns ordering, validation, and persistence. It knows nothing about
-Gemini, Claude, or Serper -- swap the agent and this is unchanged.
+the model or the search provider -- swap the agent and this is unchanged.
 """
 
 from __future__ import annotations
