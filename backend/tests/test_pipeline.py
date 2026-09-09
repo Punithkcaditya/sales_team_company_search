@@ -1,12 +1,42 @@
 """Pipeline rules that protect the report from a model going off-script."""
 
 from app.agent.pipeline import ResearchPipeline
+from app.agent.base import QuotaExceededError
 
 from .conftest import FakeAgent
 
 
 async def collect(agent, repository):
     return [event async for event in ResearchPipeline(agent, repository).run("Acme")]
+
+
+async def test_quota_failure_during_gather_is_identifiable_and_saves_nothing(repository):
+    class LimitedAgent(FakeAgent):
+        async def gather(self, company, on_search):
+            raise QuotaExceededError("Provider quota reached.")
+
+    events = await collect(LimitedAgent(), repository)
+    assert events[-1].data == {"code": "quota_exceeded", "message": "Provider quota reached."}
+    assert repository.list() == []
+
+
+async def test_quota_failure_mid_report_stops_further_model_calls(repository):
+    calls = []
+
+    class LimitedAgent(FakeAgent):
+        async def stream_section(self, section, context):
+            calls.append(section)
+            if section == "key_people":
+                raise QuotaExceededError("Provider quota reached.")
+            async for chunk in super().stream_section(section, context):
+                yield chunk
+
+    events = await collect(LimitedAgent(), repository)
+    assert calls == ["overview", "key_people"]
+    assert events[-1].event == "error"
+    assert events[-1].data["code"] == "quota_exceeded"
+    assert any(e.event == "section_delta" for e in events)
+    assert repository.list() == []
 
 
 async def test_malformed_items_are_dropped_without_losing_the_section(repository):

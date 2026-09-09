@@ -26,6 +26,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.settings = settings
+    app.dependency_overrides[get_settings] = lambda: settings
 
     app.add_middleware(
         CORSMiddleware,
@@ -38,7 +39,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # One code path in the client, and never a stack trace in front of a user.
     @app.exception_handler(HTTPException)
     async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
-        return JSONResponse({"message": exc.detail}, status_code=exc.status_code)
+        body = exc.detail if isinstance(exc.detail, dict) else {"message": exc.detail}
+        return JSONResponse(body, status_code=exc.status_code, headers=exc.headers)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:

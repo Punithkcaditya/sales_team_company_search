@@ -1,4 +1,4 @@
-import type { Report, ReportSummary } from "../types";
+import type { Report, ReportSummary, UsageStatus } from "../types";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "";
 
@@ -6,6 +6,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly code?: string,
   ) {
     super(message);
     this.name = "ApiError";
@@ -36,6 +37,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const listReports = () => request<ReportSummary[]>("/api/reports");
+
+export const getUsage = () => request<UsageStatus>("/api/usage");
 
 export const getReport = (id: number) => request<Report>(`/api/reports/${id}`);
 

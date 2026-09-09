@@ -94,12 +94,67 @@ what you are running:
 
 ### Cost
 
-Gemini's free tier does not require a billing account, and grounded requests —
-the only metered thing here — are free up to 500 per day. Since a briefing uses
-exactly one grounded prompt, that is 500 briefings a day at no cost; past the
-limit the API returns `429` and the app shows "We've hit today's free research
-limit", rather than billing anything. Note that Google may use free-tier request
-data to improve its products, which is the trade for not paying.
+Demo mode makes no model or search API calls. Live research is subject to your
+provider's billing tier and quotas. A completed Gemini briefing normally uses
+six model requests: one grounded research request and five writing requests.
+Free Google Search allowance alone does not guarantee a number of free briefings:
+request and token limits also apply. A paid-tier key can incur token charges even
+when grounding is within its free allowance. See [Google's current pricing](https://ai.google.dev/gemini-api/docs/pricing)
+and verify your project's billing tier in AI Studio. Google may use free-tier
+request data to improve its products.
+
+### Usage and navigation
+
+The status panel labels demo/live mode and shows the **app's shared daily research
+allowance**, not the provider's remaining tokens. `GET /api/usage` returns this
+status; `provider_tokens_remaining` is always `null` because this app cannot
+observe all project-wide provider usage or calculate an exact remaining balance.
+
+The default allowance is **20 live research attempts per UTC day**, shared by all
+visitors. Override it in `backend/.env` or the backend's environment:
+
+```dotenv
+DAILY_RESEARCH_LIMIT=20
+```
+
+Set `DAILY_RESEARCH_LIMIT=0` to disable only the app limit. Demo searches never
+consume it. Live attempts are counted before research starts, including failed
+or cancelled attempts, because those can already have used provider resources.
+Invalid input and duplicate concurrent requests do not consume it. SQLite stores
+the counter atomically, so restarting the backend or deleting reports does not
+restore the allowance. It resets at 00:00 UTC; the UI shows that time in the
+visitor's timezone and refreshes availability every minute, on focus, and after
+research. Gemini's own daily reset and other limits are independent.
+
+At zero app allowance, the server rejects new research with HTTP 429 and code
+`daily_limit`. Provider quota errors use SSE code `quota_exceeded` and stop further
+section requests, including when the quota is hit halfway through a report.
+Saved briefings remain available. This attempt cap is not a money budget or a
+guarantee of free provider usage.
+
+**Back to search** returns to the starting view, clears and focuses the search
+box, and cancels an active stream. Saved reports stay in history.
+
+### Sharing a deployed link
+
+The React frontend can be hosted on Vercel, with `frontend` as the project root,
+`npm run build` as the build command, and `dist` as the output directory. Set
+`VITE_API_BASE` to the HTTPS origin of your deployed backend before building.
+The local Vite `/api` proxy is a development setting; it does not exist in the
+production build. Set the backend's `CORS_ORIGINS` to include the exact frontend
+origin. Keep provider API keys only in the backend's environment, never in any
+`VITE_*` variable.
+
+The Python backend and its SQLite file need a host with persistent disk. A local
+SQLite database on Vercel Functions is not durable or shared between instances;
+moving the file to `/tmp` would not preserve report history or the usage counter.
+See [Vercel's SQLite guidance](https://vercel.com/kb/guide/is-sqlite-supported-in-vercel).
+Keep SQLite on a persistent backend host to preserve the assignment's database
+requirement. Hosting costs depend on the selected provider and plan.
+
+This app has no authentication: everyone with access to the backend shares the
+allowance and can read or delete saved briefings. Share only suitable demo data.
+No deployment is created by the local setup scripts.
 
 ### Demo mode
 
@@ -135,7 +190,8 @@ delta and is forwarded to the browser, so the rep watches the actual research
 happen rather than a spinner. Citations come back as `url_citation` annotations
 and become the report's source list.
 
-**Database — SQLite, one table.** Sections are stored as a JSON column. They are
+**Database — SQLite.** Reports store sections as a JSON column, with a separate
+small table for the shared daily allowance. Report sections are
 always read and written as a whole document and never queried field by field, so
 five normalised tables would buy nothing but joins.
 
@@ -153,7 +209,7 @@ function call).
 Two phases, deliberately separated (`backend/app/agent/`):
 
 **1. Gather** — one grounded call. The model runs Google Search itself and
-returns a schema-constrained digest: the company's canonical name, a
+returns a prompted JSON digest, validated locally: the company's canonical name, a
 `researchable` flag, and dense factual findings. That flag is how gibberish input
 gets an honest "we couldn't find that" instead of a hallucinated briefing, and an
 empty findings set is treated the same way — a confident digest with no evidence
@@ -250,7 +306,7 @@ search, relative timestamps, and a responsive layout.
   results and hands back written findings, so the app never sees the raw snippets
   the way it would with an external search API. Simpler and cheaper, but it means
   trusting the model's summarisation — which is why the digest is
-  schema-constrained and an empty findings set is treated as "not found".
+  validated locally and an empty findings set is treated as "not found".
 - **Optimistic delete.** The row disappears immediately and comes back if the
   server disagrees — the right call for an action a rep does casually.
 - **Plain CSS, no component library.** Faster than configuring one for a

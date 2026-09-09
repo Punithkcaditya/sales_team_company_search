@@ -56,10 +56,28 @@ def build_agent(settings: Settings) -> tuple[ResearchAgent, list]:
     """Return the agent for the configured provider, plus anything to close."""
     provider = settings.provider
 
+    if provider in ("gemini", "anthropic") and not settings.serper_api_key:
+        # Pinning LLM_PROVIDER can select a model provider without the search key
+        # it needs. Every search would fail and every company would come back
+        # "not found" -- so say so plainly instead of serving broken research.
+        logger.error(
+            "LLM_PROVIDER=%s needs SERPER_API_KEY for web search, which is not set. "
+            "Falling back to demo mode. Get a free key at https://serper.dev/api-key",
+            provider,
+        )
+        return DemoResearchAgent(), []
+
     if provider == "gemini":
-        logger.info("Using Gemini (%s) with built-in Google Search.", settings.gemini_model)
-        client = genai.Client(api_key=settings.gemini_api_key)
-        return GeminiResearchAgent(client=client, model=settings.gemini_model), []
+        logger.info("Using Gemini (%s) with Serper search.", settings.gemini_model)
+        http_client = httpx.AsyncClient(timeout=15.0)
+        agent = GeminiResearchAgent(
+            client=genai.Client(api_key=settings.gemini_api_key),
+            search=SerperSearchClient(settings.serper_api_key or "", client=http_client),
+            model=settings.gemini_model,
+            max_turns=settings.max_research_turns,
+            max_searches=settings.max_searches,
+        )
+        return agent, [http_client.aclose]
 
     if provider == "anthropic":
         logger.info("Using Claude (%s) with Serper search.", settings.anthropic_model)

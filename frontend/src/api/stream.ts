@@ -75,13 +75,15 @@ export async function* researchStream(
 
   if (!response.ok || !response.body) {
     let message = "Research could not be started.";
+    let code: string | undefined;
     try {
       const body = await response.json();
       if (typeof body?.message === "string") message = body.message;
+      if (typeof body?.code === "string") code = body.code;
     } catch {
       /* keep the generic message */
     }
-    throw new ApiError(message, response.status);
+    throw new ApiError(message, response.status, code ?? (response.status === 429 ? "quota_exceeded" : undefined));
   }
 
   for await (const raw of parseEventStream(response.body)) {

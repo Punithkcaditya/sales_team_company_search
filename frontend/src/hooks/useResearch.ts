@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 
 import { researchStream } from "../api/stream";
+import { ApiError } from "../api/client";
 import { initialState, reducer } from "../state/research";
 import type { Report } from "../types";
 
@@ -51,7 +52,7 @@ export function useResearch({ onSaved }: Options) {
       }
     } catch (error) {
       if (run.signal.aborted || !mounted.current) return;
-      dispatch({ type: "failed", message: describe(error) });
+      dispatch({ type: "failed", message: describe(error), code: error instanceof ApiError ? error.code : undefined });
     } finally {
       if (controller.current === run) controller.current = null;
     }

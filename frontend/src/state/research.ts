@@ -32,7 +32,7 @@ export interface ResearchState {
 export type Action =
   | { type: "start"; company: string }
   | { type: "event"; event: ResearchEvent }
-  | { type: "failed"; message: string }
+  | { type: "failed"; message: string; code?: string }
   | { type: "cancelled" }
   | { type: "loaded"; report: Report }
   | { type: "clear" };
@@ -67,7 +67,7 @@ export function reducer(state: ResearchState, action: Action): ResearchState {
       };
 
     case "failed":
-      return { ...state, phase: "error", error: action.message, errorCode: "network" };
+      return { ...state, phase: "error", activity: "", error: action.message, errorCode: action.code ?? "network" };
 
     case "cancelled":
       return { ...state, phase: "cancelled", activity: "" };

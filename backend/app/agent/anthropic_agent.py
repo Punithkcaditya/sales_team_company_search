@@ -26,6 +26,7 @@ from ..schemas import Financials, Section
 from .base import (
     AgentError,
     ItemChunk,
+    QuotaExceededError,
     ResearchContext,
     SearchObserver,
     SectionChunk,
@@ -253,7 +254,7 @@ def _format_results(query: str, results: list[SearchResult]) -> str:
 def _as_agent_error(exc: anthropic.APIError) -> AgentError:
     """Turn provider failures into something a sales rep can act on."""
     if isinstance(exc, anthropic.RateLimitError):
-        return AgentError("The research service is rate limited right now. Try again in a minute.")
+        return QuotaExceededError("The AI provider's request or token limit has been reached. Please try again later.")
     if isinstance(exc, anthropic.AuthenticationError):
         return AgentError("The research service rejected our credentials. Check the API key.")
     if isinstance(exc, anthropic.APIConnectionError):

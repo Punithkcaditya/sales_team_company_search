@@ -78,7 +78,7 @@ function SectionCard({ section, status, state }: SectionProps) {
         <h2 id={`h-${section}`} className="card__title">
           {SECTION_LABELS[section]}
         </h2>
-        {status === "streaming" && (
+        {status === "streaming" && state.phase === "researching" && (
           <span className="card__badge">
             <span className="spinner spinner--small" aria-hidden="true" />
             researching
@@ -91,6 +91,14 @@ function SectionCard({ section, status, state }: SectionProps) {
 }
 
 function SectionBody({ section, status, state }: SectionProps) {
+  if (state.phase !== "researching" && status !== "done") {
+    const value = state.sections[section];
+    const hasPartial = typeof value === "string" || Array.isArray(value)
+      ? value.length > 0
+      : Object.values(value).some(Boolean);
+    if (!hasPartial) return <p className="placeholder">Research stopped before this section finished.</p>;
+    status = "done";
+  }
   if (status === "pending") return <Skeleton />;
 
   const { sections } = state;

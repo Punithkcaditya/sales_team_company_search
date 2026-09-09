@@ -1,6 +1,6 @@
 """SQLite connection handling and schema.
 
-One small table with a JSON blob for the sections. The sections are always read
+Reports use a JSON blob for the sections, alongside a daily usage counter. Sections are always read
 and written as a whole document, never queried field-by-field, so normalising
 them into five tables would buy nothing but joins.
 """
@@ -19,6 +19,10 @@ CREATE TABLE IF NOT EXISTS reports (
     sources    TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_reports_created_at ON reports (created_at DESC);
+CREATE TABLE IF NOT EXISTS daily_research_usage (
+    day      TEXT PRIMARY KEY,
+    attempts INTEGER NOT NULL DEFAULT 0
+);
 """
 
 

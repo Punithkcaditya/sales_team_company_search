@@ -77,8 +77,10 @@ class FakeAgent:
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
+        gemini_api_key=None,
         anthropic_api_key=None,
         serper_api_key=None,
+        llm_provider="demo",
         database_path=":memory:",
         _env_file=None,
     )

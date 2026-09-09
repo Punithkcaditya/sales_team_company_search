@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "../src/App";
-import type { Report, ReportSummary } from "../src/types";
+import type { Report, ReportSummary, UsageStatus } from "../src/types";
 
 /** A hand-driven SSE body, so tests can assert on half-finished research. */
 class LiveStream {
@@ -60,6 +60,7 @@ class Backend {
   researchError = "";
   listFails = false;
   deleted: number[] = [];
+  usage: UsageStatus = { mode: "demo", provider: "demo", daily_limit: null, used_today: 0, remaining: null, resets_at: null, provider_tokens_remaining: null };
 
   seed(full: Report) {
     this.reports = [{ id: full.id, company: full.company, created_at: full.created_at }, ...this.reports];
@@ -71,9 +72,15 @@ class Backend {
       const url = String(input);
       const method = init?.method ?? "GET";
 
+      if (url.endsWith("/api/usage")) return json({ ...this.usage });
+
       if (url.endsWith("/api/research")) {
         if (this.researchStatus !== 200) {
           return json({ message: this.researchError }, this.researchStatus);
+        }
+        if (this.usage.remaining !== null) {
+          this.usage.remaining -= 1;
+          this.usage.used_today += 1;
         }
         this.stream = new LiveStream(init!.signal!);
         return { ok: true, status: 200, body: this.stream.body } as unknown as Response;
@@ -119,6 +126,12 @@ const startResearch = async (company: string) => {
 };
 
 describe("first visit", () => {
+  it("labels demo data and does not show a made-up token allowance", async () => {
+    render(<App />);
+    expect(await screen.findByText("Demo mode")).toBeInTheDocument();
+    expect(screen.getByText(/No AI tokens or live search calls are used/)).toBeInTheDocument();
+    expect(screen.queryByText(/app searches left/)).not.toBeInTheDocument();
+  });
   it("tells the rep what to do instead of showing a blank screen", async () => {
     render(<App />);
 
@@ -137,6 +150,30 @@ describe("first visit", () => {
 });
 
 describe("a research run", () => {
+  it("back to search aborts the run, clears the input and ignores late content", async () => {
+    render(<App />);
+    const stream = await startResearch("Stripe");
+    await stream.push("section_delta", { section: "overview", text: "Partial research." });
+    await userEvent.setup().click(screen.getByRole("button", { name: /Back to search/ }));
+    expect(stream.signal.aborted).toBe(true);
+    expect(screen.getByText(/Walk in knowing the room/)).toBeInTheDocument();
+    const input = screen.getByRole("textbox", { name: /company name/i });
+    expect(input).toHaveValue("");
+    expect(input).toHaveFocus();
+    await stream.push("done", { report: report() });
+    expect(screen.queryByText(/Briefing ready/)).not.toBeInTheDocument();
+  });
+
+  it("updates the shared allowance after a live attempt", async () => {
+    backend.usage = { ...backend.usage, mode: "live", provider: "gemini", daily_limit: 20, remaining: 20, resets_at: "2026-09-10T00:00:00Z" };
+    render(<App />);
+    expect(await screen.findByText("20 of 20 app searches left today")).toBeInTheDocument();
+    const stream = await startResearch("Stripe");
+    await stream.push("done", { report: report() });
+    await stream.close();
+    expect(await screen.findByText("19 of 20 app searches left today")).toBeInTheDocument();
+    expect(screen.getByText(/Provider limits may be reached sooner/)).toBeInTheDocument();
+  });
   it("shows progress, renders sections as they stream, then saves to history", async () => {
     render(<App />);
     const stream = await startResearch("Stripe");
@@ -210,6 +247,47 @@ describe("a research run", () => {
 });
 
 describe("things going wrong", () => {
+  it("shows provider quota exhaustion during a report and stops loading indicators", async () => {
+    render(<App />);
+    const stream = await startResearch("Stripe");
+    await stream.push("section_delta", { section: "overview", text: "Partial research." });
+    await stream.push("section_start", { section: "key_people" });
+    await stream.push("error", { code: "quota_exceeded", message: "Gemini's request or token limit has been reached." });
+    await stream.close();
+    expect(screen.getByRole("alert")).toHaveTextContent("Research limit reached");
+    expect(screen.getByRole("alert")).toHaveTextContent(/saved briefings/);
+    expect(screen.getByText("Partial research.")).toBeInTheDocument();
+    expect(screen.queryByText("researching")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Back to search/ })).toBeEnabled();
+  });
+
+  it("handles a quota rejection before streaming starts", async () => {
+    backend.researchStatus = 429;
+    backend.researchError = "Research quota reached.";
+    render(<App />);
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: /company name/i }), "Stripe");
+    await user.click(screen.getByRole("button", { name: "Research" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Research limit reached");
+  });
+
+  it("blocks new searches at zero allowance while preserving history and allows refresh", async () => {
+    backend.usage = { ...backend.usage, mode: "live", provider: "gemini", daily_limit: 20, used_today: 20, remaining: 0, resets_at: "2026-09-10T00:00:00Z" };
+    backend.seed(report({ company: "Saved company" }));
+    render(<App />);
+    expect(await screen.findByText("0 of 20 app searches left today")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stripe" })).toBeDisabled();
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: /company name/i }), "New company");
+    expect(screen.getByRole("button", { name: "Research" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: /^Saved company/ }));
+    expect(await screen.findByText(/Briefing ready/)).toBeInTheDocument();
+    backend.usage.remaining = 20;
+    backend.usage.used_today = 0;
+    await user.click(screen.getByRole("button", { name: "Refresh availability" }));
+    expect(await screen.findByText("20 of 20 app searches left today")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Research" })).toBeEnabled();
+  });
   it("explains an unresearchable company gently and saves nothing", async () => {
     render(<App />);
     const stream = await startResearch("asdkjhasd");
@@ -253,6 +331,17 @@ describe("things going wrong", () => {
 });
 
 describe("history", () => {
+  it("returns from a saved briefing without deleting it", async () => {
+    backend.seed(report());
+    render(<App />);
+    const user = userEvent.setup();
+    const history = screen.getByRole("complementary", { name: /previous briefings/i });
+    await user.click(await within(history).findByRole("button", { name: /^Stripe/ }));
+    await user.click(await screen.findByRole("button", { name: /Back to search/ }));
+    expect(screen.getByText(/Walk in knowing the room/)).toBeInTheDocument();
+    expect(within(history).getByText("Stripe")).toBeInTheDocument();
+    expect(backend.deleted).toEqual([]);
+  });
   it("opens a saved briefing and deletes it", async () => {
     backend.seed(report({ id: 42, company: "Datadog" }));
     render(<App />);

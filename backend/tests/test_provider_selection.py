@@ -19,12 +19,15 @@ def settings(**over) -> Settings:
     "keys, expected",
     [
         ({}, "demo"),
-        ({"gemini_api_key": "g"}, "gemini"),
-        # Anthropic has no built-in search, so one key alone is not enough to run.
+        # Neither model provider can search on its own -- Gemini's built-in
+        # google_search has no free-tier quota -- so a model key alone is not
+        # enough to run, and half-configured never means a half-working app.
+        ({"gemini_api_key": "g"}, "demo"),
         ({"anthropic_api_key": "a"}, "demo"),
         ({"serper_api_key": "s"}, "demo"),
+        ({"gemini_api_key": "g", "serper_api_key": "s"}, "gemini"),
         ({"anthropic_api_key": "a", "serper_api_key": "s"}, "anthropic"),
-        # Gemini wins when both are available: one key, and search is included.
+        # Gemini wins when both model keys are present: it is the free one.
         ({"gemini_api_key": "g", "anthropic_api_key": "a", "serper_api_key": "s"}, "gemini"),
     ],
 )
@@ -38,4 +41,23 @@ def test_no_keys_means_demo_mode_and_therefore_no_paid_call():
 
 @pytest.mark.parametrize("provider", ["gemini", "anthropic", "demo"])
 def test_an_explicit_provider_overrides_auto_detection(provider):
-    assert settings(llm_provider=provider, gemini_api_key="g").provider == provider
+    pinned = settings(llm_provider=provider, gemini_api_key="g", serper_api_key="s")
+    assert pinned.provider == provider
+
+
+def test_a_provider_pinned_without_a_search_key_falls_back_loudly(caplog):
+    """LLM_PROVIDER can select a model provider whose search key is missing.
+
+    Running anyway would fail every search and report every company as
+    "not found" -- broken research that looks like a real answer.
+    """
+    from app.agent.demo import DemoResearchAgent
+    from app.deps import build_agent
+
+    pinned = settings(llm_provider="gemini", gemini_api_key="g")  # no serper key
+
+    agent, closers = build_agent(pinned)
+
+    assert isinstance(agent, DemoResearchAgent)
+    assert closers == []
+    assert "SERPER_API_KEY" in caplog.text

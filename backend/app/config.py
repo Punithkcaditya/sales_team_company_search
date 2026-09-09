@@ -3,6 +3,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Anchored to the backend package rather than the working directory, so the
@@ -14,10 +15,10 @@ DEFAULT_DATABASE = BACKEND_ROOT / "reports.db"
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=BACKEND_ROOT / ".env", extra="ignore")
 
-    # Gemini needs one key and nothing else: Google Search is built into the
-    # model, so there is no separate search subscription to sign up for.
+    # Gemini's built-in google_search tool has no free-tier quota, so search
+    # runs through Serper instead -- both keys are free and need no card.
     gemini_api_key: str | None = None
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-flash-latest"
 
     # Anthropic needs a second key for search, since it has no built-in one.
     anthropic_api_key: str | None = None
@@ -33,6 +34,8 @@ class Settings(BaseSettings):
     # money forever on one request.
     max_research_turns: int = 6
     max_searches: int = 10
+    # Shared app allowance, not the provider's quota. Zero disables this app limit.
+    daily_research_limit: int = Field(default=20, ge=0)
 
     @property
     def provider(self) -> str:
@@ -44,7 +47,7 @@ class Settings(BaseSettings):
         """
         if self.llm_provider != "auto":
             return self.llm_provider
-        if self.gemini_api_key:
+        if self.gemini_api_key and self.serper_api_key:
             return "gemini"
         if self.anthropic_api_key and self.serper_api_key:
             return "anthropic"

@@ -4,11 +4,19 @@ interface Props {
   onSearch: (company: string) => void;
   onCancel: () => void;
   busy: boolean;
+  resetKey?: number;
+  blocked?: boolean;
 }
 
-export function SearchBar({ onSearch, onCancel, busy }: Props) {
+export function SearchBar({ onSearch, onCancel, busy, resetKey = 0, blocked = false }: Props) {
   const [value, setValue] = useState("");
   const input = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (resetKey === 0) return;
+    setValue("");
+    input.current?.focus();
+  }, [resetKey]);
 
   // Cmd/Ctrl+K jumps back to the search box from anywhere.
   useEffect(() => {
@@ -26,7 +34,7 @@ export function SearchBar({ onSearch, onCancel, busy }: Props) {
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const company = value.trim();
-    if (company && !busy) onSearch(company);
+    if (company && !busy && !blocked) onSearch(company);
   };
 
   return (
@@ -57,7 +65,7 @@ export function SearchBar({ onSearch, onCancel, busy }: Props) {
           Cancel
         </button>
       ) : (
-        <button type="submit" className="button" disabled={!value.trim()}>
+        <button type="submit" className="button" disabled={!value.trim() || blocked}>
           Research
         </button>
       )}

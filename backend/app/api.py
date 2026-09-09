@@ -14,6 +14,7 @@ from .config import Settings, get_settings
 from .deps import ActiveResearch, get_active_research, get_agent, get_repository
 from .repository import ReportRepository
 from .schemas import Report, ResearchRequest, ReportSummary
+from .usage import DailyUsage
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ async def research(
     agent: ResearchAgent = Depends(get_agent),
     repository: ReportRepository = Depends(get_repository),
     active: ActiveResearch = Depends(get_active_research),
+    settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
     """Stream a research run as Server-Sent Events.
 
@@ -56,6 +58,19 @@ async def research(
             detail=f"Research on {company} is already running.",
         )
 
+    try:
+        if not DailyUsage(repository.db).reserve(settings):
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "code": "daily_limit",
+                    "message": "Today's shared app research allowance is exhausted. It resets at 00:00 UTC.",
+                },
+            )
+    except Exception:
+        await active.release(company)
+        raise
+
     pipeline = ResearchPipeline(agent, repository)
 
     async def stream() -> AsyncIterator[str]:
@@ -68,6 +83,14 @@ async def research(
             await active.release(company)
 
     return StreamingResponse(stream(), media_type="text/event-stream", headers=SSE_HEADERS)
+
+
+@router.get("/usage")
+async def usage(
+    settings: Settings = Depends(get_settings),
+    repository: ReportRepository = Depends(get_repository),
+) -> dict:
+    return DailyUsage(repository.db).snapshot(settings)
 
 
 @router.get("/reports", response_model=list[ReportSummary])

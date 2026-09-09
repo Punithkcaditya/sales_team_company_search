@@ -47,6 +47,16 @@ export interface ReportSummary {
   created_at: string;
 }
 
+export interface UsageStatus {
+  mode: "demo" | "live";
+  provider: string;
+  daily_limit: number | null;
+  used_today: number;
+  remaining: number | null;
+  resets_at: string | null;
+  provider_tokens_remaining: number | null;
+}
+
 export interface Report extends ReportSummary {
   sections: ReportSections;
   sources: Source[];

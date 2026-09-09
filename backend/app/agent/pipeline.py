@@ -24,7 +24,7 @@ from ..schemas import (
     RiskItem,
     Section,
 )
-from .base import AgentError, ItemChunk, ResearchAgent, ResearchContext, TextDelta, ValueChunk
+from .base import AgentError, ItemChunk, QuotaExceededError, ResearchAgent, ResearchContext, TextDelta, ValueChunk
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ class ResearchPipeline:
                 yield events.search(query)
             context = await task
         except AgentError as exc:
-            yield events.error("agent_error", str(exc))
+            yield events.error(exc.code, str(exc))
             return
         except Exception:
             logger.exception("Research failed for %r", company)
@@ -90,6 +90,10 @@ class ResearchPipeline:
             try:
                 async for event in self._run_section(section, context, sections):
                     yield event
+            except QuotaExceededError as exc:
+                # Further section calls would consume attempts without fixing the quota.
+                yield events.error(exc.code, str(exc))
+                return
             except Exception:
                 # One flaky section should not cost the rep the other four.
                 logger.exception("Section %s failed for %r", section, context.company)

@@ -86,3 +86,11 @@ class ResearchAgent(Protocol):
 
 class AgentError(RuntimeError):
     """The agent could not complete research for a reason worth showing a user."""
+
+    code = "agent_error"
+
+
+class QuotaExceededError(AgentError):
+    """Stop the run when the provider refuses further usage."""
+
+    code = "quota_exceeded"
