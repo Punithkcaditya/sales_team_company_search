@@ -9,12 +9,14 @@ from collections.abc import AsyncIterator
 
 import httpx
 from fastapi import Request
+import groq
 from google import genai
 from google.genai.types import HttpOptions, HttpRetryOptions
 
 from .agent.base import ResearchAgent
 from .agent.demo import DemoResearchAgent
 from .agent.gemini_agent import GeminiResearchAgent
+from .agent.groq_agent import GroqResearchAgent
 from .agent.search import SerperSearchClient
 from .config import Settings
 from .db import Database
@@ -55,7 +57,7 @@ def build_agent(settings: Settings) -> tuple[ResearchAgent, list]:
     """Return the agent for the configured provider, plus anything to close."""
     provider = settings.provider
 
-    if provider == "gemini" and not settings.serper_api_key:
+    if provider in ("gemini", "groq") and not settings.serper_api_key:
         # Pinning LLM_PROVIDER can select a model provider without the search key
         # it needs. Every search would fail and every company would come back
         # "not found" -- so say so plainly instead of serving broken research.
@@ -89,6 +91,22 @@ def build_agent(settings: Settings) -> tuple[ResearchAgent, list]:
         )
         return agent, [http_client.aclose]
 
+
+    if provider == "groq":
+        logger.info("Using Groq (%s) with Serper search.", settings.groq_model)
+        http_client = httpx.AsyncClient(timeout=15.0)
+        agent = GroqResearchAgent(
+            # The SDK retries on its own schedule, which compounds with the agent's
+            # backoff into minutes of waiting. The agent honours the cooldown the
+            # server states, so it owns retries alone.
+            client=groq.AsyncGroq(api_key=settings.groq_api_key, max_retries=0),
+            search=SerperSearchClient(settings.serper_api_key or "", client=http_client),
+            model=settings.groq_model,
+            writer_model=settings.groq_writer_model,
+            max_turns=settings.max_research_turns,
+            max_searches=settings.max_searches,
+        )
+        return agent, [http_client.aclose]
 
     logger.warning("No API key set - running in demo mode with canned research.")
     return DemoResearchAgent(), []

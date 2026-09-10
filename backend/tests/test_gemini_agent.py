@@ -19,7 +19,7 @@ from app.agent.base import (
     TextDelta,
     ValueChunk,
 )
-from app.agent import gemini_agent
+from app.agent import backoff, gemini_agent
 from app.agent.gemini_agent import GeminiResearchAgent, as_gemini_tool
 from app.agent.prompts import WEB_SEARCH_TOOL
 from app.agent.search import SearchError, SearchResult, StaticSearchClient
@@ -91,7 +91,7 @@ def instant_sleep(monkeypatch):
     async def fake_sleep(seconds: float) -> None:
         slept.append(seconds)
 
-    monkeypatch.setattr(gemini_agent.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(backoff.asyncio, "sleep", fake_sleep)
     return slept
 
 
@@ -338,7 +338,7 @@ class TestProviderErrors:
         with pytest.raises(QuotaExceededError):
             await agent.gather("Samsung", observer([]))
 
-        assert instant_sleep == [gemini_agent._MAX_BACKOFF_SECONDS] * 2
+        assert instant_sleep == [backoff.MAX_BACKOFF_SECONDS] * 2
 
     async def test_a_rate_limited_call_that_then_succeeds_is_not_surfaced_as_an_error(
         self, instant_sleep

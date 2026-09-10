@@ -15,7 +15,8 @@ export function UsageBanner({ usage, unavailable, onRefresh }: Props) {
 
   const demo = usage.mode === "demo";
   const exhausted = usage.remaining === 0;
-  const provider = usage.provider === "gemini" ? "Gemini" : "Demo";
+  const PROVIDER_NAMES: Record<string, string> = { gemini: "Gemini", groq: "Groq" };
+  const provider = PROVIDER_NAMES[usage.provider] ?? usage.provider;
   const reset = usage.resets_at
     ? new Date(usage.resets_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
     : null;

@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     # own allowance. Set it equal to gemini_model to use just one.
     gemini_writer_model: str = "gemini-flash-lite-latest"
 
+    # A second model provider, so a demo is not at the mercy of one free tier.
+    groq_api_key: str | None = None
+    groq_model: str = "openai/gpt-oss-120b"
+    # The writing pass is shallow work, so it gets the faster model.
+    groq_writer_model: str = "openai/gpt-oss-20b"
+
     serper_api_key: str | None = None
 
     # "auto" runs live research when both keys are present; "demo" forces the
@@ -34,7 +40,9 @@ class Settings(BaseSettings):
 
     # Ceiling on the agent's research loop, so a confused model cannot spend
     # money forever on one request.
-    max_research_turns: int = 6
+    # Each turn is a round trip the rep waits through, and some models will
+    # keep searching rather than stopping on their own.
+    max_research_turns: int = 5
     max_searches: int = 10
     # A guard on this app's own usage, not the provider's quota and not a
     # spending limit -- the free tier cannot be billed. It stops a day's
@@ -43,7 +51,7 @@ class Settings(BaseSettings):
 
     @property
     def provider(self) -> str:
-        """Which agent implementation to run: "gemini" or "demo".
+        """Which agent implementation to run: "gemini", "groq", or "demo".
 
         Demo mode is the fallback when nothing is configured. It swaps the
         provider implementation, not the pipeline -- the real agent is
@@ -53,6 +61,8 @@ class Settings(BaseSettings):
             return self.llm_provider
         if self.gemini_api_key and self.serper_api_key:
             return "gemini"
+        if self.groq_api_key and self.serper_api_key:
+            return "groq"
         return "demo"
 
     @property

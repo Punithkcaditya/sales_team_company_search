@@ -8,7 +8,7 @@ import pytest
 
 from app.config import Settings
 
-BLANK = {"serper_api_key": None, "gemini_api_key": None, "_env_file": None}
+BLANK = {"serper_api_key": None, "gemini_api_key": None, "groq_api_key": None, "_env_file": None}
 
 
 def settings(**over) -> Settings:
@@ -25,6 +25,11 @@ def settings(**over) -> Settings:
         ({"gemini_api_key": "g"}, "demo"),
         ({"serper_api_key": "s"}, "demo"),
         ({"gemini_api_key": "g", "serper_api_key": "s"}, "gemini"),
+        # A second model provider, for when one free tier is exhausted.
+        ({"groq_api_key": "q"}, "demo"),
+        ({"groq_api_key": "q", "serper_api_key": "s"}, "groq"),
+        # Gemini is preferred when both are configured; pin LLM_PROVIDER to switch.
+        ({"gemini_api_key": "g", "groq_api_key": "q", "serper_api_key": "s"}, "gemini"),
     ],
 )
 def test_provider_is_chosen_from_the_keys_actually_present(keys, expected):
@@ -35,9 +40,11 @@ def test_no_keys_means_demo_mode_and_therefore_no_paid_call():
     assert settings().demo_mode is True
 
 
-@pytest.mark.parametrize("provider", ["gemini", "demo"])
+@pytest.mark.parametrize("provider", ["gemini", "groq", "demo"])
 def test_an_explicit_provider_overrides_auto_detection(provider):
-    pinned = settings(llm_provider=provider, gemini_api_key="g", serper_api_key="s")
+    pinned = settings(
+        llm_provider=provider, gemini_api_key="g", groq_api_key="q", serper_api_key="s"
+    )
     assert pinned.provider == provider
 
 

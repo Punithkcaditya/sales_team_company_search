@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -37,6 +36,7 @@ from google.genai._gaos.errors import GenAiError as InteractionAPIError
 from google.genai._gaos.lib.compat_errors import APIError as InteractionTransportError
 
 from ..schemas import Section
+from . import backoff
 from .base import (
     AgentError,
     QuotaExceededError,
@@ -245,7 +245,7 @@ class GeminiResearchAgent:
         if previous_interaction_id:
             request["previous_interaction_id"] = previous_interaction_id
 
-        for attempt in range(_MAX_ATTEMPTS):
+        for attempt in range(backoff.MAX_ATTEMPTS):
             started = time.monotonic()
             try:
                 result = await self._client.aio.interactions.create(**request)
@@ -256,7 +256,7 @@ class GeminiResearchAgent:
                 InteractionAPIError,
                 InteractionTransportError,
             ) as exc:
-                if await _wait_to_retry(exc, attempt):
+                if await backoff.wait_to_retry(exc, attempt):
                     continue
                 raise _as_agent_error(exc) from exc
         raise _quota_error()
@@ -288,7 +288,7 @@ class GeminiResearchAgent:
                 "thinking_level": thinking,
             },
         }
-        for attempt in range(_MAX_ATTEMPTS):
+        for attempt in range(backoff.MAX_ATTEMPTS):
             emitted = False
             started = time.monotonic()
             try:
@@ -315,7 +315,7 @@ class GeminiResearchAgent:
             ) as exc:
                 # Replaying a half-written section would duplicate text on
                 # screen, so only a stream that produced nothing may be retried.
-                if not emitted and await _wait_to_retry(exc, attempt):
+                if not emitted and await backoff.wait_to_retry(exc, attempt):
                     continue
                 raise _as_agent_error(exc) from exc
         raise _quota_error()
@@ -353,71 +353,17 @@ def _format_results(query: str, results: list[SearchResult]) -> str:
     return f"Results for {query!r}:\n{body}"
 
 
-_MAX_ATTEMPTS = 3
-_MAX_BACKOFF_SECONDS = 30.0
-# The free tier's 429 carries its own cooldown: "Please retry in 17.47s".
-_RETRY_HINT = re.compile(r"retry in ([\d.]+)\s*s", re.IGNORECASE)
-
-
-async def _wait_to_retry(exc: Exception, attempt: int) -> bool:
-    """Sleep and report whether the call is worth another attempt.
-
-    The free tier meters requests per minute, so a 429 is a pause rather than a
-    dead end -- and the server states how long to wait. Honouring that turns a
-    burst of requests into a short delay instead of a failed briefing.
-    """
-    if attempt >= _MAX_ATTEMPTS - 1:
-        return False
-
-    delay: float | None = None
-    if _status_of(exc) == 429:
-        hint = _RETRY_HINT.search(str(exc))
-        delay = min(float(hint.group(1)) + 0.5, _MAX_BACKOFF_SECONDS) if hint else 5.0
-    elif _is_transient(exc):
-        delay = 1.0 * (attempt + 1)
-
-    if delay is None:
-        return False
-
-    logger.warning("Retrying in %.1fs after: %s", delay, str(exc)[:120])
-    await asyncio.sleep(delay)
-    return True
-
-
-def _is_transient(exc: Exception) -> bool:
-    """A dropped connection or a 5xx is worth one more attempt; a 429 is not."""
-    status = _status_of(exc)
-    return type(exc).__name__ in {"APIConnectionError", "APITimeoutError"} or (
-        status is not None and status >= 500
-    )
-
-
 def _as_agent_error(exc: Exception) -> AgentError:
     """Turn provider failures into something a sales rep can act on."""
-    status = _status_of(exc)
+    status = backoff.status_of(exc)
     if status == 429:
         return _quota_error()
     if status in (401, 403):
         return AgentError("The research service rejected our credentials. Check GEMINI_API_KEY.")
-    if _is_transient(exc):
+    if backoff.is_transient(exc):
         return AgentError("Lost the connection to the research service. Please try again.")
     logger.exception("Gemini request failed")
     return AgentError("The research service failed unexpectedly. Try again.")
-
-
-def _status_of(exc: Exception) -> int | None:
-    """The HTTP status, wherever this SDK's several error types keep it.
-
-    `genai.errors.APIError` uses `code`; the interactions transport uses
-    `status_code`. Either may be absent or non-numeric.
-    """
-    for attribute in ("status_code", "code"):
-        value = getattr(exc, attribute, None)
-        if isinstance(value, int):
-            return value
-        if isinstance(value, str) and value.isdigit():
-            return int(value)
-    return None
 
 
 def _quota_error() -> QuotaExceededError:

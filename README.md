@@ -92,6 +92,13 @@ requests/minute on the free tier) and reset within the minute.
 
 2,500 free queries on signup, no card required.
 
+### Optional: `GROQ_API_KEY` — a second model provider
+
+<https://console.groq.com/keys>, free, no card. Search is provider-independent
+here, so a second model needs no second search key — it reuses Serper.
+`LLM_PROVIDER=groq` selects it, which is useful when Gemini's per-minute limit
+is in the way, since the two providers meter separately.
+
 ### Checking it worked
 
 ```bash
@@ -134,6 +141,12 @@ Serper returns real Google SERPs (organic, news, knowledge panel) over one REST
 call, and its news block carries dates, which is what makes "recent news"
 actually recent. Running search client-side also makes the agent legible: you
 can read the loop rather than trust a black box.
+
+**Two providers, one agent shape.** Because search runs client-side and is
+handed to the model as a tool, a model provider supplies nothing but transport.
+`agent/groq_agent.py` shares the prompts, tool definitions, section parser,
+retry policy, and streaming contract with the Gemini agent; only the wire format
+differs. That is the payoff of keeping search out of the model.
 
 **Database — SQLite, one table.** Sections are stored as a JSON column. They are
 always read and written as a whole document and never queried field by field, so
